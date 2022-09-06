@@ -1,3 +1,5 @@
+All thanks goes to CompVis and Stability AI for releasing this codebase! Pretrained models coming soon...
+
 # Stable Diffusion
 *Stable Diffusion was made possible thanks to a collaboration with [Stability AI](https://stability.ai/) and [Runway](https://runwayml.com/) and builds upon our previous work:*
 
@@ -51,6 +53,8 @@ Details on the training procedure and data, as well as the intended use of the m
 
 The weights are available via [the CompVis organization at Hugging Face](https://huggingface.co/CompVis) under [a license which contains specific use-based restrictions to prevent misuse and harm as informed by the model card, but otherwise remains permissive](LICENSE). While commercial use is permitted under the terms of the license, **we do not recommend using the provided weights for services or products without additional safety mechanisms and considerations**, since there are [known limitations and biases](Stable_Diffusion_v1_Model_Card.md#limitations-and-bias) of the weights, and research on safe and ethical deployment of general text-to-image models is an ongoing effort. **The weights are research artifacts and should be treated as such.**
 
+[Request access to Stable Diffusion v1 checkpoints for academic research](https://stability.ai/academia-access-form) 
+
 [The CreativeML OpenRAIL M license](LICENSE) is an [Open RAIL M license](https://www.licenses.ai/blog/2022/8/18/naming-convention-of-responsible-ai-licenses), adapted from the work that [BigScience](https://bigscience.huggingface.co/) and [the RAIL Initiative](https://www.licenses.ai/) are jointly carrying in the area of responsible AI licensing. See also [the article about the BLOOM Open RAIL license](https://bigscience.huggingface.co/blog/the-bigscience-rail-license) on which our license is based.
 
 ### Weights
@@ -103,7 +107,6 @@ python scripts/txt2img.py --prompt "a photograph of an astronaut riding a horse"
 By default, this uses a guidance scale of `--scale 7.5`, [Katherine Crowson's implementation](https://github.com/CompVis/latent-diffusion/pull/51) of the [PLMS](https://arxiv.org/abs/2202.09778) sampler, 
 and renders images of size 512x512 (which it was trained on) in 50 steps. All supported arguments are listed below (type `python scripts/txt2img.py --help`).
 
-
 ```commandline
 usage: txt2img.py [-h] [--prompt [PROMPT]] [--outdir [OUTDIR]] [--skip_grid] [--skip_save] [--ddim_steps DDIM_STEPS] [--plms] [--laion400m] [--fixed_code] [--ddim_eta DDIM_ETA]
                   [--n_iter N_ITER] [--H H] [--W W] [--C C] [--f F] [--n_samples N_SAMPLES] [--n_rows N_ROWS] [--scale SCALE] [--from-file FROM_FILE] [--config CONFIG] [--ckpt CKPT]
@@ -137,6 +140,7 @@ optional arguments:
   --seed SEED           the seed (for reproducible sampling)
   --precision {full,autocast}
                         evaluate at this precision
+
 ```
 Note: The inference config for all v1 versions is designed to be used with EMA-only checkpoints. 
 For this reason `use_ema=False` is set in the configuration, otherwise the code will try to switch from
@@ -210,6 +214,7 @@ Thanks for open-sourcing!
       archivePrefix={arXiv},
       primaryClass={cs.CV}
 }
+
 ```
 
 
