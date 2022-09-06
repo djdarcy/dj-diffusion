@@ -1,3 +1,9 @@
 [submodule "deps/GFPGAN"]
 	path = deps/GFPGAN
 	url = https://github.com/TencentARC/GFPGAN
+[submodule "src/latent-diffusion"]
+	path = src/latent-diffusion
+	url = https://github.com/CompVis/latent-diffusion.git
+[submodule "dj-sd-webui"]
+	path = dj-sd-webui
+	url = https://github.com/djdarcy/dj-sd-webui.git
