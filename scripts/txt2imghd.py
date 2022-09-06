@@ -1,4 +1,5 @@
-import argparse, os
+import argparse, os, shutil
+from typing import List, Optional
 import cv2
 import torch
 import cv2
@@ -195,9 +196,9 @@ def grid_slice(source, overlap, og_size, maximize=False):
     return slices, new_size
 
 class Options:
-    prompt: str
+    prompt: List[str]
     outdir: str
-    ddim_steps: int
+    steps: int
     n_iter: int
     H: int
     W: int
@@ -211,6 +212,11 @@ class Options:
     passes: int
     wm: str
     realesrgan: str
+    detail_steps: int
+    detail_scale: float
+    gobig_overlap: int
+    generated: Optional[List[str]]
+    img: str
 
 def main():
     parser = argparse.ArgumentParser()
@@ -220,6 +226,18 @@ def main():
         type=str,
         nargs="?",
         help="the prompt to render"
+    )
+    parser.add_argument(
+        "--generated",
+        type=str,
+        nargs="?",
+        help="only do detailing, using these base filenames in output dir"
+    )
+    parser.add_argument(
+        "--img",
+        type=str,
+        nargs="?",
+        help="only do detailing, using this path (will be copied to output dir)"
     )
     parser.add_argument(
         "--outdir",
@@ -322,6 +340,24 @@ def main():
         default="realesrgan-ncnn-vulkan",
         help="path to realesrgan executable"
     )
+    parser.add_argument(
+        "--detail_steps",
+        type=int,
+        default=150,
+        help="number of sampling steps when detailing",
+    )
+    parser.add_argument(
+        "--detail_scale",
+        type=float,
+        default=10,
+        help="unconditional guidance scale when detailing: eps = eps(x, empty) + scale * (eps(x, cond) - eps(x, empty))",
+    )
+    parser.add_argument(
+        "--gobig_overlap",
+        type=int,
+        default=128,
+        help="overlap size for GOBIG",
+    )
     opt = parser.parse_args()
 
     if opt.prompt is None:
@@ -362,10 +398,16 @@ def text2img2(opt: Options):
     os.makedirs(opt.outdir, exist_ok=True)
     outpath = opt.outdir
 
+    sample_path = os.path.join(outpath, "samples")
+    os.makedirs(sample_path, exist_ok=True)
+
     #wm_encoder = WatermarkEncoder()
     #wm_encoder.set_watermark('bytes', opt.wm.encode('utf-8'))
 
     batch_size = 1
+    precision_scope = autocast
+    base_count = len(os.listdir(sample_path))
+
     if not opt.from_file:
         prompt = opt.prompt
         assert prompt is not None
@@ -377,69 +419,66 @@ def text2img2(opt: Options):
             data = f.read().splitlines()
             data = list(chunk(data, batch_size))
 
-    sample_path = os.path.join(outpath, "samples")
-    os.makedirs(sample_path, exist_ok=True)
-    base_count = len(os.listdir(sample_path))
-
-    precision_scope = autocast
-    generated = []
-    with torch.no_grad():
-        with precision_scope("cuda"):
-            with model.ema_scope():
-                tic = time.time()
-                all_samples = list()
-                for n in trange(opt.n_iter, desc="Sampling"):
-                    for prompts in tqdm(data, desc="data"):
-                        uc = None
-                        if opt.scale != 1.0:
-                            uc = model.get_learned_conditioning(batch_size * [""])
-                        if isinstance(prompts, tuple):
-                            prompts = list(prompts)
-                        c = model.get_learned_conditioning(prompts)
-                        shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
-                        samples_ddim, _ = sampler.sample(S=opt.steps,
-                                                         conditioning=c,
-                                                         batch_size=batch_size,
-                                                         shape=shape,
-                                                         verbose=False,
-                                                         unconditional_guidance_scale=opt.scale,
-                                                         unconditional_conditioning=uc,
-                                                         eta=0,
-                                                         x_T=None)
-
-                        x_samples_ddim = model.decode_first_stage(samples_ddim)
-                        x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
-                        x_samples_ddim = x_samples_ddim.cpu().permute(0, 2, 3, 1).numpy()
-
-                        x_checked_image = x_samples_ddim
-
-                        x_checked_image_torch = torch.from_numpy(x_checked_image).permute(0, 3, 1, 2)
-
-                        for x_sample in x_checked_image_torch:
-                            x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
-                            img = Image.fromarray(x_sample.astype(np.uint8))
-                            output_path = os.path.join(sample_path, f"{base_count:05}.png")
-                            img.save(output_path)
-                            generated.append(base_count)
-                            base_count += 1
-
-    torch.cuda.empty_cache()
-    gc.collect()
+    generated = opt.generated
+    if generated is None and opt.img is not None:
+        shutil.copyfile(opt.img, os.path.join(sample_path, f"{base_count:05}.png"))
+        generated = [f"{base_count:05}"]
+    elif isinstance(generated, str):
+        generated = [generated]
     
+    if generated is None:
+        generated = []
+        with torch.inference_mode():
+            with precision_scope("cuda"):
+                with model.ema_scope():
+                    for _ in trange(opt.n_iter, desc="Sampling"):
+                        for prompts in tqdm(data, desc="data"):
+                            uc = None
+                            if opt.scale != 1.0:
+                                uc = model.get_learned_conditioning(batch_size * [""])
+                            if isinstance(prompts, tuple):
+                                prompts = list(prompts)
+                            c = model.get_learned_conditioning(prompts)
+                            shape = [opt.C, opt.H // opt.f, opt.W // opt.f]
+                            samples_ddim, _ = sampler.sample(S=opt.steps,
+                                                            conditioning=c,
+                                                            batch_size=batch_size,
+                                                            shape=shape,
+                                                            verbose=False,
+                                                            unconditional_guidance_scale=opt.scale,
+                                                            unconditional_conditioning=uc,
+                                                            eta=0,
+                                                            x_T=None)
+
+                            x_samples_ddim = model.decode_first_stage(samples_ddim)
+                            x_samples_ddim = torch.clamp((x_samples_ddim + 1.0) / 2.0, min=0.0, max=1.0)
+                            x_samples_ddim = x_samples_ddim.cpu().permute(0, 2, 3, 1).numpy()
+
+                            x_checked_image = x_samples_ddim
+
+                            x_checked_image_torch = torch.from_numpy(x_checked_image).permute(0, 3, 1, 2)
+
+                            for x_sample in x_checked_image_torch:
+                                x_sample = 255. * rearrange(x_sample.cpu().numpy(), 'c h w -> h w c')
+                                img = Image.fromarray(x_sample.astype(np.uint8))
+                                output_path = os.path.join(sample_path, f"{base_count:05}.png")
+                                img.save(output_path)
+                                generated.append(f"{base_count:05}")
+                                base_count += 1
+
+        torch.cuda.empty_cache()
+        gc.collect()
+
     sampler = DDIMSampler(model)
 
-    gobig_overlap = 64
-
-    for init_img_number in generated:
-        base_filename = f"{init_img_number:05}"
-
+    for base_filename in generated:
         for _ in trange(opt.passes, desc="Passes"):
             realesrgan2x(opt.realesrgan, os.path.join(sample_path, f"{base_filename}.png"), os.path.join(sample_path, f"{base_filename}u.png"))
             base_filename = f"{base_filename}u"
 
             source_image = Image.open(os.path.join(sample_path, f"{base_filename}.png"))
-            og_size = (int(source_image.size[0] / 2), int(source_image.size[1] / 2))
-            slices, _ = grid_slice(source_image, gobig_overlap, og_size, False)
+            og_size = (opt.H,opt.W)
+            slices, _ = grid_slice(source_image, opt.gobig_overlap, og_size, False)
 
             betterslices = []
             for _, chunk_w_coords in tqdm(enumerate(slices), "Slices"):
@@ -448,17 +487,17 @@ def text2img2(opt: Options):
                 init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
                 init_latent = model.get_first_stage_encoding(model.encode_first_stage(init_image))  # move to latent space
 
-                sampler.make_schedule(ddim_num_steps=opt.steps, ddim_eta=0, verbose=False)
+                sampler.make_schedule(ddim_num_steps=opt.detail_steps, ddim_eta=0, verbose=False)
 
                 assert 0. <= opt.strength <= 1., 'can only work with strength in [0.0, 1.0]'
-                t_enc = int(opt.strength * opt.steps)
+                t_enc = int(opt.strength * opt.detail_steps)
 
-                with torch.no_grad():
+                with torch.inference_mode():
                     with precision_scope("cuda"):
                         with model.ema_scope():
                             for prompts in tqdm(data, desc="data"):
                                 uc = None
-                                if opt.scale != 1.0:
+                                if opt.detail_scale != 1.0:
                                     uc = model.get_learned_conditioning(batch_size * [""])
                                 if isinstance(prompts, tuple):
                                     prompts = list(prompts)
@@ -467,7 +506,7 @@ def text2img2(opt: Options):
                                 # encode (scaled latent)
                                 z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(device))
                                 # decode it
-                                samples = sampler.decode(z_enc, c, t_enc, unconditional_guidance_scale=opt.scale,
+                                samples = sampler.decode(z_enc, c, t_enc, unconditional_guidance_scale=opt.detail_scale,
                                                         unconditional_conditioning=uc,)
 
                                 x_samples = model.decode_first_stage(samples)
@@ -482,7 +521,7 @@ def text2img2(opt: Options):
             alpha_gradient = ImageDraw.Draw(alpha)
             a = 0
             i = 0
-            overlap = gobig_overlap
+            overlap = opt.gobig_overlap
             shape = (og_size, (0,0))
             while i < overlap:
                 alpha_gradient.rectangle(shape, fill = a)
